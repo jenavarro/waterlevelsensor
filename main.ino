@@ -1,174 +1,60 @@
-#include <ESP8266WiFi.h>
-#define echoPin D7 // Echo Pin
-#define trigPin D5 // Trigger Pin
+#include <NewPing.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <AutoConnect.h>
 
- String apiKey = "XXXXXXXXX";
-const char* ssid = "XXXXX";
-const char* password = "XXXXXXXXXXXXX";
-const char* server = "api.thingspeak.com";
-int connecttimes = 0;
-const bool send = true;
+#define TRIGGER_PIN 5     // Arduino pin tied to trigger pin on the ultrasonic sensor.
+#define ECHO_PIN 18       // Arduino pin tied to echo pin on the ultrasonic sensor.
+#define MAX_DISTANCE 400  // Maximum distance we want to ping for (in centimeters). Maximum sensor distance is rated at 400-500cm.
 
-const int sleepSeconds = 60 * 15;
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);  // NewPing setup of pins and maximum distance.
+WebServer Server;
+AutoConnect Portal(Server);
 
-long duration, distance; 
-
-const int qtysamples = 20;
-long samples[qtysamples];
-long stats[qtysamples][2];
-int i,j;
-int qtystats=0;
-long maxqty=0;
-long maxqtyindex=0;
-const boolean enablelogging = false;
-long dist;
-WiFiClient client;
-
-void setup()
-{
-  
-  // Connect D0 to RST to wake up
-  pinMode(D0, WAKEUP_PULLUP);
-
-  Serial.begin (9600);
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-
-  WiFi.begin(ssid, password);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
- 
-  WiFi.begin(ssid, password); 
-  connecttimes = 0;
-  while (WiFi.status() != WL_CONNECTED && connecttimes < 120 ) 
-  {
-    delay(500);
-    Serial.print(".");
-    connecttimes++;
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Cannot connect to WiFi, resetting...");
-    delay(3000);
-    WiFi.disconnect();
-    ESP.restart(); 
-    delay(3000);
-  }
-  Serial.println("");
-  Serial.println("WiFi connected");
-
+void rootPage() {
+  char content[] = "Hello, world";
+  Server.send(200, "text/plain", content);
+}
+void statsPage() {
+  String strg = String("{\"distance\":" + String(getMeasurement()) + ",\"unit\":\"cm\"}") ;
+  Server.send(200, "application/json", strg);
 }
 
-void initialize_variables()
-{
-  for(i=0;i<qtysamples;i++) {
-    samples[i]= -1;
-  }
-  for (j=0; j<qtysamples; j++) {
-    stats[j][0]=-1;
-    stats[j][1]=0;
-  }
-  qtystats=0;
-  maxqty=-1;
-  maxqtyindex=0;
+int qty_measurements = 0;
+
+void setup() {
+  delay(1000);
+  Serial.begin(115200);
+
+  Server.on("/", rootPage);
+  Server.on("/stats", statsPage);
+  Portal.begin();
+  Serial.println("Web server started:" + WiFi.localIP().toString());
 }
 
-long getDistance() {
-  if (enablelogging) Serial.println("START LOOP: RAW SAMPLES-------------");
+int getMeasurement() {
+  int obs1 = getOneMeasurement();
+  int obs2 = getOneMeasurement();
+  int obs3 = getOneMeasurement();
+  int obs4 = getOneMeasurement();
+  int obs5 = getOneMeasurement();
+  int measurement = (obs1 + obs2 + obs3 + obs4 + obs5) / 5;
 
-  initialize_variables();
-
-  for (i=0; i<qtysamples;i++) {
-    digitalWrite(trigPin, LOW);
-    delayMicroseconds(2);
-    digitalWrite(trigPin, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(trigPin, LOW);
-    duration = pulseIn(echoPin, HIGH);
-    distance = (duration / 2) * 0.0343;
-    samples[i]=-1;
-    if (distance >= 400 || distance <= 2) {
-         if (enablelogging) Serial.println("Out of range, duration = ");
-      }
-      else {
-        if (enablelogging) {
-          Serial.print(i);
-          Serial.print(": ");
-          Serial.print("   distance=");
-          Serial.print( distance);
-          Serial.println(" cm");
-        }
-        samples[i]=distance;
-        delay(100);
-      }
-  }
-  
-  if (enablelogging) Serial.println(" START PROCESSING-------------");
-  qtystats=0;
-  for (i=0; i<qtysamples; i++) {
-    if (samples[i]==-1) break;
-    for (j=0; j<qtystats;j++) {
-      if (stats[j][0]==samples[i]) {
-        stats[j][1]++;
-        break;
-      }
-    }
-    if (j>=qtystats) {
-      stats[qtystats][0]=samples[i];
-      stats[qtystats][1]=1;
-      qtystats++;
-    }
-  }
-  maxqty=-1;
-  maxqtyindex=-1;
-  for (j=0; j<qtystats;j++) {
-    if (enablelogging) {
-       Serial.print(stats[j][0]);
-      Serial.print(" qty.: ");
-    }
-    if (stats[j][1]>maxqty) {
-      maxqty=stats[j][1];
-      maxqtyindex=j;
-      if (enablelogging) Serial.print(" *");
-    }
-    if (enablelogging) Serial.println(stats[j][1]);
-    }
-  if (enablelogging) Serial.print(" Most reported distance: ");
-  if (maxqty != -1 && maxqty > 1) {   // more than 1 obs for same distance value
-      if (enablelogging) {
-        Serial.println(stats[maxqtyindex][0]);
-        Serial.println(" END LOOP -------------");
-      }
-     return stats[maxqtyindex][0];
-  }
-  else {
-      if (enablelogging) Serial.println(" END LOOP -------------");
-      return -1;  
-  }
+  Serial.print("Avg Dist: ");
+  Serial.print(measurement);  // Send ping, get distance in cm and print result (0 = outside set distance range)
+  Serial.println("cm");
+  return measurement;
 }
- 
-void loop()
-{
-  distance = getDistance();
 
-    if (client.connect(server,80) && distance > -1) {
-        String postStr = apiKey;
-        postStr +="&field1=";
-        postStr += String(distance);
-        //postStr += "\r\n\r\n";
-        if (send==true)  {
-          client.print("POST /update.json HTTP/1.1\n");
-          client.print("Host: api.thingspeak.com\n");
-          client.print("Connection: close\n");
-          client.print("X-THINGSPEAKAPIKEY: "+apiKey+"\n");
-          client.print("Content-Type: application/x-www-form-urlencoded\n");
-          client.print("Content-Length: ");
-          client.print(postStr.length());
-          client.print("\n\n");
-          client.print(postStr);
-        }         
-    }
-    client.stop();
-  
-  ESP.deepSleep(sleepSeconds * 1000000);
+int getOneMeasurement() {
+  int dist = -1;
+  for (; dist < 2 || dist > 300;) {
+    dist = sonar.ping_cm();
+    delay(100);
+  }
+  return dist;
+}
+
+void loop() {
+  Portal.handleClient();
 }
