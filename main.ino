@@ -10,6 +10,7 @@
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);  // NewPing setup of pins and maximum distance.
 WebServer Server;
 AutoConnect Portal(Server);
+AutoConnectConfig config;
 
 void rootPage() {
   char content[] = "Hello, world";
@@ -23,6 +24,13 @@ void statsPage() {
 int qty_measurements = 0;
 
 void setup() {
+  // For AutoConnect
+  config.ota = AC_OTA_BUILTIN;
+  config.autoReconnect = true;
+  config.reconnectInterval = 6;
+  config.retainPortal = true;
+  Portal.config(config);
+  
   delay(1000);
   Serial.begin(115200);
 
